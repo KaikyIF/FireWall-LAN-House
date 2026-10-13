@@ -7,7 +7,7 @@ services:
       - NET_ADMIN
     networks:
       cliente_net:
-        ipv4_address: 172.20.0.10
+        ipv4_address: 10.80.1.10
     depends_on:
       - firewall
     tty: true
@@ -18,19 +18,25 @@ services:
     cap_add:
       - NET_ADMIN
     sysctls:
-      - net.ipv4.ip_forward=1
+      net.ipv4.ip_forward: "1"
     networks:
       cliente_net:
-        ipv4_address: 172.20.0.2
-      dmz:
-        ipv4_address: 172.21.0.2
+        ipv4_address: 10.80.1.2
+      web_net:
+        ipv4_address: 10.80.2.2
+      db_net:
+        ipv4_address: 10.80.3.2
 
   web:
-    image: nginx:alpine
+    build: ./web
     container_name: lanhouse-web
+    cap_add:
+      - NET_ADMIN
     networks:
-      dmz:
-        ipv4_address: 172.21.0.10
+      web_net:
+        ipv4_address: 10.80.2.10
+    depends_on:
+      - firewall
     volumes:
       - ./web/index.html:/usr/share/nginx/html/index.html:ro
 
@@ -42,18 +48,24 @@ services:
       POSTGRES_PASSWORD: lanhouse123
       POSTGRES_DB: lanhouse
     networks:
-      dmz:
-        ipv4_address: 172.21.0.20
+      db_net:
+        ipv4_address: 10.80.3.20
 
 networks:
   cliente_net:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.20.0.0/24
+        - subnet: 10.80.1.0/24
 
-  dmz:
+  web_net:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.21.0.0/24
+        - subnet: 10.80.2.0/24
+
+  db_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.80.3.0/24

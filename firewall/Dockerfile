@@ -1,12 +1,11 @@
+
 FROM alpine:latest
 
-RUN apk add --no-cache \
-    iptables \
-    iproute2 \
-    iputils
+RUN apk add --no-cache iptables iproute2 ip6tables
 
 COPY entrypoint.sh /entrypoint.sh
 
-RUN chmod +x /entrypoint.sh
+RUN sed -i 's/\r$//' /entrypoint.sh \
+    && chmod +x /entrypoint.sh
 
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["/bin/sh", "/entrypoint.sh"]
