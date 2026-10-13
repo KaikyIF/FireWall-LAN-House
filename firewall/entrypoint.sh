@@ -31,11 +31,27 @@ iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
 echo ""
 echo "Liberando Cliente -> Web HTTP..."
 
+echo "Configurando NAT para o acesso a DMZ..."
+iptables -t nat -A POSTROUTING \
+    -s 172.20.0.0/24 \
+    -d 172.21.0.0/24 \
+    -j MASQUERADE
+
 iptables -A FORWARD \
     -s 172.20.0.0/24 \
     -d 172.21.0.10 \
     -p tcp \
     --dport 80 \
+    -j ACCEPT
+
+echo ""
+echo "Liberando Web -> Banco de dados PostgreSQL..."
+
+iptables -A FORWARD \
+    -s 172.21.0.10 \
+    -d 172.21.0.20 \
+    -p tcp \
+    --dport 5432 \
     -j ACCEPT
 
 echo ""
