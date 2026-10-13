@@ -1,213 +1,334 @@
-
 # FireWall-LAN-House
 
-## 1. Definição do Case
+## 1. Apresentação do projeto
 
-O projeto simula a infraestrutura de rede de uma LAN House utilizando Docker e Docker Compose. O objetivo é demonstrar a segmentação de redes, o controle de tráfego entre diferentes segmentos e a aplicação de regras de segurança por meio de um firewall Linux com iptables.
+O **FireWall-LAN-House** é um projeto de simulação de infraestrutura de redes e segurança utilizando Docker Compose, redes Docker do tipo `bridge`, um container firewall com `iptables`, um servidor web Nginx e um banco de dados PostgreSQL.
 
-A infraestrutura possui três redes isoladas: a rede dos clientes, a rede do servidor web e a rede do banco de dados. O firewall funciona como roteador entre esses segmentos e controla quais conexões podem atravessar as redes.
+O objetivo é demonstrar como a segmentação de uma rede e a aplicação de regras de firewall podem controlar a comunicação entre diferentes ambientes, permitindo apenas os acessos necessários e bloqueando conexões não autorizadas.
 
-## 2. Diagnóstico do cenário
+O projeto foi desenvolvido para fins acadêmicos, com o propósito de demonstrar conceitos de roteamento, segmentação de redes, filtragem de pacotes, controle de acesso e validação de regras de segurança.
 
-Em uma LAN House, os computadores dos clientes não devem ter acesso irrestrito aos servidores e aos serviços internos. A ausência de segmentação e de regras de filtragem pode permitir acessos indevidos a serviços que deveriam ser restritos.
+## 2. Definição do case
 
-Para reduzir esse risco, o projeto utiliza:
-- Segmentação da rede em sub-redes distintas.
-- Firewall com política padrão de bloqueio do tráfego encaminhado.
-- Liberação explícita dos serviços necessários.
-- Isolamento do banco de dados em uma rede própria.
-- Registro de contadores de pacotes para auxiliar na análise das regras.
+### Cenário proposto
 
-## 3. Tecnologias utilizadas
+Uma empresa fictícia de LAN House utiliza computadores para atender clientes e disponibiliza um sistema web para gerenciamento de suas operações. Esse sistema precisa acessar um banco de dados para armazenar e consultar informações.
 
-- Docker: execução dos componentes em containers.
-- Docker Compose: definição e gerenciamento da infraestrutura.
-- Alpine Linux: base dos containers de cliente e firewall.
-- iptables: filtragem de pacotes e configuração de NAT.
-- Nginx: servidor HTTP.
-- PostgreSQL: banco de dados.
-- curl e Nmap: testes de conectividade e diagnóstico.
+Em uma infraestrutura sem segmentação adequada, os computadores da rede interna poderiam tentar estabelecer conexões diretamente com serviços internos, incluindo o banco de dados. Essa situação aumenta a superfície de ataque e dificulta o controle sobre quais equipamentos podem acessar cada serviço.
 
-## 4. Arquitetura da rede
+Para reduzir esses riscos, foi proposta uma arquitetura segmentada, na qual o computador cliente, o servidor web e o banco de dados são colocados em redes distintas, com a comunicação entre elas controlada por um container firewall.
 
-A infraestrutura é composta pelos seguintes elementos:
+### Serviços necessários
 
-| Componente | Endereço IP | Rede | Função |
-|---|---|---|---|
-| Cliente | 172.20.0.10 | cliente_net | Simula o computador de um usuário |
-| Firewall - interface cliente | 172.20.0.2 | cliente_net | Gateway da rede cliente |
-| Firewall - interface web | 172.21.0.2 | web_net | Gateway da rede web |
-| Servidor web | 172.21.0.10 | web_net | Disponibiliza o serviço HTTP |
-| Firewall - interface banco | 172.22.0.2 | db_net | Gateway da rede do banco |
-| Banco de dados | 172.22.0.20 | db_net | Disponibiliza o PostgreSQL |
+- **Estação cliente:** representa um computador utilizado na LAN House.
+- **Firewall/roteador:** controla o encaminhamento de pacotes entre as redes.
+- **Servidor web:** disponibiliza uma página HTTP por meio do Nginx.
+- **Banco de dados:** utiliza PostgreSQL para representar um serviço interno que não deve ser acessado diretamente pelo cliente.
 
-### Redes
+## 3. Diagnóstico: cenário atual e proposta de solução
 
-- `cliente_net`: 172.20.0.0/24
-- `web_net`: 172.21.0.0/24
-- `db_net`: 172.22.0.0/24
+### 3.1. Problemas identificados no cenário hipotético
 
-O firewall possui uma interface em cada rede. O cliente e o servidor web possuem rotas explícitas para alcançar as redes remotas através do firewall.
+Antes da implantação da solução, foram considerados os seguintes riscos:
 
-O banco de dados permanece em uma rede separada, sem conexão direta à rede dos clientes ou à rede web. Dessa forma, o tráfego entre esses segmentos precisa passar pelas regras de encaminhamento do firewall.
+- Ausência de segmentação entre estações de trabalho e servidores.
+- Possibilidade de conexões diretas a serviços internos.
+- Falta de regras explícitas para controlar o tráfego entre redes.
+- Exposição desnecessária da porta do banco de dados aos computadores clientes.
+- Dificuldade de verificar quais conexões são permitidas ou bloqueadas.
 
-## 5. Matriz de regras
+Esses problemas representam riscos hipotéticos utilizados para justificar a solução. O ambiente Docker foi construído para demonstrar como mitigá-los.
 
-| Origem | Destino | Serviço | Decisão |
-|---|---|---|---|
-| Cliente | Servidor web | TCP/80 (HTTP) | Permitir |
-| Servidor web | Banco de dados | TCP/5432 (PostgreSQL) | Permitir |
-| Conexões autorizadas | Retorno da conexão | ESTABLISHED, RELATED | Permitir |
-| Cliente | Banco de dados | TCP/5432 | Bloquear |
-| Cliente | Servidor web | Portas diferentes da 80 | Bloquear |
-| Outras conexões encaminhadas | Qualquer rede | Não autorizadas | Bloquear |
+### 3.2. Proposta de solução
 
-A cadeia `FORWARD` utiliza a política padrão `DROP`. Assim, o tráfego encaminhado só é permitido quando corresponde a uma regra explícita.
+A solução utiliza três redes Docker personalizadas do tipo `bridge`, separando a rede cliente, a rede do servidor web e a rede do banco de dados.
 
-A cadeia `INPUT` também utiliza `DROP`, permitindo loopback e tráfego de retorno estabelecido destinado ao próprio firewall. A cadeia `OUTPUT` utiliza `ACCEPT` para permitir o tráfego originado pelo firewall.
+Um container firewall possui uma interface em cada rede e atua como gateway entre elas. O encaminhamento de pacotes é habilitado e o `iptables` aplica regras de filtragem na cadeia `FORWARD`.
 
-O NAT é utilizado para que as respostas das conexões autorizadas retornem pelo firewall.
+A política padrão da cadeia `FORWARD` é `DROP`, ou seja, os pacotes encaminhados que não correspondem às regras de permissão são descartados. São autorizadas as conexões HTTP da rede cliente para o servidor web e as conexões PostgreSQL do servidor web para o banco de dados. O tráfego de conexões já estabelecidas ou relacionadas também é permitido.
 
-## 6. Como executar
+O firewall aplica regras de NAT para os fluxos previstos, facilitando o retorno das respostas pelo caminho controlado.
 
-### Pré-requisitos
+Essa arquitetura demonstra o princípio do menor privilégio: cada serviço recebe somente as permissões de comunicação necessárias ao cenário proposto.
 
-- Docker instalado e em execução.
-- Docker Compose disponível pelo comando `docker compose`.
-- Terminal aberto na pasta do projeto.
+## 4. Arquitetura de rede
 
-### Inicializar a infraestrutura
+### 4.1. Diagrama lógico
 
-Na raiz do projeto, execute:
-
-```bash
-docker compose down
-docker compose up -d --build
+```text
+                REDE CLIENTE
+                10.80.1.0/24
+                      |
+             Cliente: 10.80.1.10
+                      |
+             Firewall: 10.80.1.2
+                      |
+              [ CONTAINER FIREWALL ]
+                iptables / NAT
+                      |
+             Firewall: 10.80.2.2
+                      |
+                  REDE WEB
+                10.80.2.0/24
+                      |
+              Nginx: 10.80.2.10
+                      |
+             Firewall: 10.80.3.2
+                      |
+                  REDE DB
+                10.80.3.0/24
+                      |
+           PostgreSQL: 10.80.3.20
 ```
 
-O primeiro comando encerra e remove os containers e as redes gerenciadas pelo Compose anterior. O segundo constrói as imagens e inicia os serviços.
+O diagrama representa a separação lógica das redes e os caminhos previstos de comunicação. O firewall é o gateway configurado para o encaminhamento entre elas.
 
-Para verificar o estado dos containers:
+### 4.2. Endereçamento IP
 
-```bash
-docker compose ps
-```
+| Componente | Rede | Endereço IP |
+|---|---|---|
+| Cliente | `cliente_net` | `10.80.1.10` |
+| Firewall — interface cliente | `cliente_net` | `10.80.1.2` |
+| Firewall — interface web | `web_net` | `10.80.2.2` |
+| Servidor web Nginx | `web_net` | `10.80.2.10` |
+| Firewall — interface banco | `db_net` | `10.80.3.2` |
+| Banco PostgreSQL | `db_net` | `10.80.3.20` |
 
-Para consultar os logs:
+### 4.3. Redes Docker
 
-```bash
-docker compose logs
-```
+| Rede | Sub-rede | Finalidade |
+|---|---|---|
+| `cliente_net` | `10.80.1.0/24` | Comunicação da estação cliente com o firewall. |
+| `web_net` | `10.80.2.0/24` | Comunicação do servidor web com o firewall. |
+| `db_net` | `10.80.3.0/24` | Comunicação do banco de dados com o firewall. |
 
-Para consultar somente os logs do firewall:
+As redes são definidas explicitamente no `docker-compose.yml`, utilizando o driver `bridge` e sub-redes personalizadas.
 
-```bash
-docker compose logs firewall
-```
+O cliente está conectado somente à rede cliente, o Nginx somente à rede web e o PostgreSQL somente à rede do banco. O firewall possui interfaces nas três redes para realizar o roteamento e aplicar as regras de filtragem.
 
-## 7. Metodologia de testes
+## 5. Matriz de regras de segurança
 
-Os testes abaixo devem ser executados após a inicialização dos containers.
+A tabela apresenta as regras configuradas e o comportamento esperado do ambiente.
 
-### Teste 1 — Verificar o serviço HTTP permitido
+| Origem | Destino | Porta/protocolo | Ação | Justificativa |
+|---|---|---|---|---|
+| Qualquer origem encaminhada | Qualquer destino encaminhado | Todos | DROP por padrão | Bloquear tráfego entre redes sem autorização explícita. |
+| Conexões estabelecidas ou relacionadas | Destino correspondente | Conforme a conexão | ACCEPT | Permitir o retorno do tráfego de conexões autorizadas. |
+| Rede Cliente (`10.80.1.0/24`) | Servidor Web (`10.80.2.10`) | TCP 80 | ACCEPT | Permitir que o cliente utilize o sistema web. |
+| Servidor Web (`10.80.2.10`) | Banco (`10.80.3.20`) | TCP 5432 | ACCEPT | Permitir que a aplicação web acesse o PostgreSQL. |
+| Rede Cliente (`10.80.1.0/24`) | Banco (`10.80.3.20`) | TCP 5432 | DROP pela política padrão | Impedir o acesso direto do cliente ao banco de dados. |
+| Rede Cliente | Servidor Web | TCP 443 | Sem liberação configurada | HTTPS não faz parte da implementação atual. |
 
-Execute:
+### Observações sobre as regras
 
-```bash
-docker exec lanhouse-cliente curl -m 5 http://172.21.0.10
-```
+A regra que impede o acesso direto do cliente ao PostgreSQL não é uma regra `DROP` específica por endereço e porta: o bloqueio ocorre porque a cadeia `FORWARD` utiliza a política padrão `DROP` e não existe uma regra de permissão para esse fluxo.
 
-Resultado esperado: o comando retorna o HTML da página da LAN House. Isso demonstra que o cliente consegue acessar o servidor web pela porta 80 através do firewall.
+O firewall também utiliza regras de NAT na cadeia `POSTROUTING` para os fluxos previstos entre as redes cliente/web e web/banco.
 
-### Teste 2 — Verificar o bloqueio do acesso ao banco pelo cliente
+Na implementação atual, as políticas `INPUT` e `OUTPUT` estão configuradas como `ACCEPT`. A política padrão `DROP` está aplicada à cadeia `FORWARD`, responsável por filtrar os pacotes encaminhados entre as redes.
 
-Execute:
+## 6. Tecnologias utilizadas
 
-```bash
-docker exec lanhouse-cliente nmap -Pn -p 5432 -T3 172.22.0.20
-```
+- **Docker:** execução dos componentes em containers isolados.
+- **Docker Compose:** definição dos serviços, redes, endereços IP, volumes e dependências.
+- **Alpine Linux:** imagem base dos containers cliente e firewall.
+- **iptables:** configuração das regras de filtragem e NAT.
+- **Nginx:** servidor web HTTP.
+- **PostgreSQL 16:** banco de dados utilizado para simular um serviço interno.
+- **Shell Script (`entrypoint.sh`):** configuração automática das rotas e das regras na inicialização dos containers.
+- **Git e GitHub:** versionamento e compartilhamento do projeto.
 
-Resultado esperado: a porta 5432 aparece como `filtered` ou sem resposta, indicando que o tráfego do cliente está sendo filtrado.
+## 7. Estrutura do projeto
 
-### Teste 3 — Verificar o acesso ao PostgreSQL a partir do servidor web
-
-Execute:
-
-```bash
-docker exec lanhouse-web pg_isready -h 172.22.0.20 -p 5432 -U lanhouse -t 5
-```
-
-Resultado esperado: uma mensagem informando que o servidor aceita conexões. Isso demonstra que o servidor web consegue alcançar o PostgreSQL pela rota configurada através do firewall.
-
-Esse teste verifica a disponibilidade de conexão do PostgreSQL; não substitui um teste de autenticação nem uma consulta SQL.
-
-### Teste 4 — Consultar as regras do firewall
-
-Execute:
-
-```bash
-docker exec lanhouse-firewall iptables -L FORWARD -n -v
-```
-
-Resultado esperado:
-- Política padrão `DROP`.
-- Regra para cliente acessar o servidor web na porta 80.
-- Regra para o servidor web acessar o banco na porta 5432.
-- Regra para conexões estabelecidas e relacionadas.
-
-Os contadores de pacotes e bytes permitem observar se as regras estão sendo utilizadas durante os testes.
-
-### Teste 5 — Consultar as regras de NAT
-
-Execute:
-
-```bash
-docker exec lanhouse-firewall iptables -t nat -L POSTROUTING -n -v
-```
-
-Resultado esperado: exibição das regras `MASQUERADE` configuradas para os fluxos autorizados entre as redes.
-
-### Teste 6 — Verificar as rotas do cliente
-
-Execute:
-
-```bash
-docker exec lanhouse-cliente ip route
-```
-
-Resultado esperado: presença de rotas para `172.21.0.0/24` e `172.22.0.0/24` usando o gateway `172.20.0.2`.
-
-## 8. Estrutura dos arquivos
+A estrutura principal dos arquivos é organizada da seguinte maneira:
 
 ```text
 FireWall-LAN-House/
-├── compose.yaml
-├── README.md
+├── docker-compose.yml
 ├── cliente/
 │   ├── Dockerfile
 │   └── entrypoint.sh
 ├── firewall/
 │   ├── Dockerfile
 │   └── entrypoint.sh
-└── web/
-    ├── Dockerfile
-    ├── entrypoint.sh
-    └── index.html
+├── web/
+│   ├── Dockerfile
+│   ├── entrypoint.sh
+│   └── index.html
+└── README.md
 ```
 
-- `compose.yaml`: define os serviços, endereços IP e redes.
-- `cliente/Dockerfile`: constrói a imagem do cliente com ferramentas de diagnóstico.
-- `cliente/entrypoint.sh`: configura as rotas do cliente.
-- `firewall/Dockerfile`: instala as ferramentas necessárias ao firewall.
-- `firewall/entrypoint.sh`: ativa o roteamento e carrega as regras de filtragem e NAT.
-- `web/Dockerfile`: constrói a imagem do Nginx com ferramentas de teste.
-- `web/entrypoint.sh`: configura a rota para a rede do banco e inicia o Nginx.
-- `web/index.html`: página disponibilizada pelo servidor HTTP.
+### Responsabilidade dos arquivos
 
-## 9. Considerações finais
+- `docker-compose.yml`: define os containers, as redes, os endereços IP, as permissões e o volume do servidor web.
+- `cliente/Dockerfile`: prepara a imagem da estação cliente.
+- `cliente/entrypoint.sh`: configura as rotas do cliente para as redes internas por meio do firewall.
+- `firewall/Dockerfile`: prepara a imagem do firewall e instala as ferramentas necessárias.
+- `firewall/entrypoint.sh`: habilita o roteamento, limpa regras antigas e carrega as regras de filtragem e NAT automaticamente.
+- `web/Dockerfile`: prepara a imagem do Nginx e instala as ferramentas necessárias para configurar a rota e testar o PostgreSQL.
+- `web/entrypoint.sh`: configura a rota para a rede do banco e inicia o servidor web.
+- `web/index.html`: contém a página HTML utilizada para validar o funcionamento do servidor.
+- `README.md`: documenta o cenário, a arquitetura, as regras e os testes.
 
-O projeto demonstra como a segmentação de redes e o uso de regras de firewall podem restringir o acesso aos serviços de uma infraestrutura simulada.
+## 8. Como executar o projeto
 
-O cliente possui acesso HTTP ao servidor web, enquanto o acesso ao PostgreSQL é autorizado somente para o servidor web. A política padrão de bloqueio reduz a possibilidade de conexões não previstas, e os testes permitem observar o comportamento das regras.
+### 8.1. Pré-requisitos
 
-A solução tem finalidade didática. Em um ambiente de produção, seria necessário complementar a configuração com gestão segura de credenciais, persistência adequada do banco, monitoramento, políticas de atualização e revisão das permissões dos containers.
+- Docker instalado e em execução.
+- Docker Compose disponível por meio do comando `docker compose`.
+- Terminal compatível com os comandos apresentados, como PowerShell no Windows.
+
+### 8.2. Iniciar o ambiente
+
+No terminal, acesse a pasta raiz do repositório e execute:
+
+```powershell
+docker compose up -d --build
+```
+
+O comando constrói as imagens necessárias e inicia os containers em segundo plano. Durante a inicialização, os scripts de entrada configuram as rotas e as regras de firewall.
+
+### 8.3. Verificar os containers
+
+```powershell
+docker compose ps -a
+```
+
+Os quatro serviços esperados são:
+
+- `lanhouse-cliente`
+- `lanhouse-firewall`
+- `lanhouse-web`
+- `lanhouse-db`
+
+Todos devem estar em execução para a realização dos testes.
+
+### 8.4. Consultar os logs
+
+```powershell
+docker compose logs --tail=50 cliente firewall web
+```
+
+Para consultar somente os logs do firewall:
+
+```powershell
+docker compose logs firewall
+```
+
+### 8.5. Encerrar o ambiente
+
+```powershell
+docker compose down
+```
+
+Esse comando encerra e remove os containers e a rede criada pelo Compose. A imagem e os arquivos locais do projeto permanecem disponíveis. Como o ambiente utiliza a configuração atual sem volume persistente declarado para os dados do PostgreSQL, não se deve considerar os dados do banco preservados após a remoção e recriação do container.
+
+## 9. Metodologia de testes e validação
+
+Os testes devem verificar tanto as conexões permitidas quanto as conexões que precisam ser bloqueadas.
+
+Os comandos a seguir foram utilizados no ambiente e podem ser repetidos pelo avaliador.
+
+### Teste 1 — Verificar a política e as regras do firewall
+
+**Objetivo:** confirmar que o encaminhamento utiliza política padrão `DROP` e possui as permissões previstas.
+
+```powershell
+docker exec lanhouse-firewall iptables -L FORWARD -n -v
+```
+
+**Resultado esperado:** a saída apresenta `Chain FORWARD (policy DROP)` e regras para conexões estabelecidas, HTTP para o servidor web e PostgreSQL do servidor web para o banco.
+
+Os contadores de pacotes e bytes permitem observar a atividade das regras.
+
+### Teste 2 — Acesso HTTP do cliente ao servidor web
+
+**Objetivo:** confirmar que o cliente consegue acessar o serviço web autorizado.
+
+```powershell
+docker exec lanhouse-cliente wget -qO- http://10.80.2.10
+```
+
+**Resultado esperado:** o terminal apresenta o conteúdo HTML da página inicial, incluindo a mensagem de que o servidor web está funcionando corretamente.
+
+**Resultado observado:** o conteúdo HTML foi recebido com sucesso.
+
+### Teste 3 — Disponibilidade do PostgreSQL a partir do servidor web
+
+**Objetivo:** verificar se o serviço PostgreSQL está acessível pelo caminho autorizado entre a rede web e a rede do banco.
+
+```powershell
+docker exec lanhouse-web pg_isready -h 10.80.3.20 -p 5432 -U lanhouse
+```
+
+**Resultado esperado:**
+
+```text
+10.80.3.20:5432 - accepting connections
+```
+
+Esse resultado confirma que o PostgreSQL está aceitando conexões. O comando não realiza, por si só, uma consulta SQL nem comprova autenticação com o banco.
+
+**Resultado observado:** o PostgreSQL respondeu que estava aceitando conexões.
+
+### Teste 4 — Bloqueio do acesso direto do cliente ao banco
+
+**Objetivo:** confirmar que a estação cliente não consegue estabelecer uma conexão TCP diretamente com a porta PostgreSQL.
+
+Primeiro, instale a ferramenta de teste no container cliente:
+
+```powershell
+docker exec lanhouse-cliente apk add --no-cache netcat-openbsd
+```
+
+Depois, execute:
+
+```powershell
+docker exec lanhouse-cliente sh -c 'nc -z -w 3 10.80.3.20 5432; echo Codigo de retorno: $?'
+```
+
+**Resultado esperado:** código de retorno `1`, indicando que a conexão não foi estabelecida.
+
+**Resultado observado:** o comando retornou código `1`, confirmando que a tentativa de conexão não foi estabelecida.
+
+### Teste 5 — Verificar os pacotes descartados
+
+**Objetivo:** observar os contadores do firewall após as tentativas de conexão.
+
+```powershell
+docker exec lanhouse-firewall iptables -L FORWARD -n -v
+```
+
+**Resultado observado:** após a tentativa de acesso direto ao banco, a política `DROP` apresentava nove pacotes e 540 bytes descartados. Os contadores são cumulativos e podem incluir outros pacotes descartados, portanto não identificam individualmente a origem de cada descarte.
+
+### Resumo da validação
+
+| Teste | Resultado observado | Situação |
+|---|---|---|
+| Containers em execução | Os quatro containers estavam `Up` | Aprovado |
+| Política `FORWARD` | Política padrão `DROP` | Aprovado |
+| Cliente acessando o Nginx | Página HTML recebida | Aprovado |
+| Servidor web verificando o PostgreSQL | Serviço aceitando conexões | Aprovado |
+| Cliente tentando acessar diretamente o PostgreSQL | Código de retorno `1` | Aprovado |
+| Contadores do firewall | Pacotes descartados registrados | Aprovado |
+
+Os testes demonstram que o serviço web está acessível, que o PostgreSQL responde a partir do servidor web e que a tentativa de conexão direta do cliente ao banco não foi estabelecida.
+
+## 10. Limitações e possíveis melhorias
+
+O ambiente foi construído para demonstrar os princípios básicos de segmentação e filtragem de redes. Algumas melhorias possíveis para uma versão futura são:
+
+- Aplicar políticas mais restritivas também às cadeias `INPUT` e `OUTPUT`, com regras explícitas para o tráfego necessário ao funcionamento do firewall.
+- Adicionar HTTPS com certificado e configuração do servidor web.
+- Implementar uma aplicação web que execute consultas reais ao PostgreSQL, validando a comunicação em nível de aplicação.
+- Adicionar regras de registro de pacotes bloqueados para facilitar a auditoria.
+- Automatizar os testes positivos e negativos para facilitar a repetição da validação.
+- Avaliar a persistência dos dados do PostgreSQL por meio de um volume, caso seja necessária em uma evolução do projeto.
+
+## 11. Conclusão
+
+O projeto FireWall-LAN-House demonstra uma arquitetura de rede segmentada com containers Docker, na qual um firewall atua como gateway e controla o tráfego encaminhado entre a estação cliente, o servidor web e o banco de dados.
+
+A utilização de redes `bridge` separadas, rotas explícitas, regras de `iptables` e scripts de inicialização permite demonstrar o acesso autorizado ao servidor web, a comunicação do servidor web com o PostgreSQL e o bloqueio de uma tentativa de acesso direto do cliente ao banco.
+
+Os resultados obtidos nos testes fornecem evidências práticas do funcionamento da arquitetura implementada e da aplicação das regras de segurança propostas para o cenário hipotético de uma LAN House.
