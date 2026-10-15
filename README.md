@@ -318,7 +318,6 @@ Os testes demonstram que o serviço web está acessível, que o PostgreSQL respo
 
 O ambiente foi construído para demonstrar os princípios básicos de segmentação e filtragem de redes. Algumas melhorias possíveis para uma versão futura são:
 
-- Aplicar políticas mais restritivas também às cadeias `INPUT` e `OUTPUT`, com regras explícitas para o tráfego necessário ao funcionamento do firewall.
 - Adicionar HTTPS com certificado e configuração do servidor web.
 - Implementar uma aplicação web que execute consultas reais ao PostgreSQL, validando a comunicação em nível de aplicação.
 - Adicionar regras de registro de pacotes bloqueados para facilitar a auditoria.
